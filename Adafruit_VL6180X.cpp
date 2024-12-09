@@ -185,23 +185,30 @@ void Adafruit_VL6180X::loadSettings(void) {
 /**************************************************************************/
 
 uint8_t Adafruit_VL6180X::readRange(void) {
-  // wait for device to be ready for range measurement
-  while (!(read8(VL6180X_REG_RESULT_RANGE_STATUS) & 0x01))
-    ;
-
+  unsigned long startTime;
+  // Wait for device to be ready for range measurement
+  startTime = millis();
+  while (!(read8(VL6180X_REG_RESULT_RANGE_STATUS) & 0x01)) {
+    if (millis() - startTime > 500) { // 500 ms timeout
+      Serial.println(F("Timeout waiting for range status!"));
+      return 255; // Return an error value or handle it as needed
+    }
+  }
   // Start a range measurement
   write8(VL6180X_REG_SYSRANGE_START, 0x01);
 
   // Poll until bit 2 is set
-  while (!(read8(VL6180X_REG_RESULT_INTERRUPT_STATUS_GPIO) & 0x04))
-    ;
-
-  // read range in mm
+  startTime = millis();
+  while (!(read8(VL6180X_REG_RESULT_INTERRUPT_STATUS_GPIO) & 0x04)) {
+    if (millis() - startTime > 500) { // 500 ms timeout
+      Serial.println(F("Timeout waiting for range measurement!"));
+      return 255; // Return an error value or handle it as needed
+    }
+  }
+  // Read range in mm
   uint8_t range = read8(VL6180X_REG_RESULT_RANGE_VAL);
-
-  // clear interrupt
+  // Clear interrupt
   write8(VL6180X_REG_SYSTEM_INTERRUPT_CLEAR, 0x07);
-
   return range;
 }
 
@@ -217,14 +224,20 @@ uint8_t Adafruit_VL6180X::readRange(void) {
 /**************************************************************************/
 
 boolean Adafruit_VL6180X::startRange(void) {
-  // wait for device to be ready for range measurement
-  while (!(read8(VL6180X_REG_RESULT_RANGE_STATUS) & 0x01))
-    ;
+  unsigned long startTime = millis();
+
+  // Wait for the device to be ready for range measurement
+  while (!(read8(VL6180X_REG_RESULT_RANGE_STATUS) & 0x01)) {
+    if (millis() - startTime > 500) { // 500 ms timeout
+      Serial.println(F("Timeout waiting for range status in startRange!"));
+      return false; // Signal failure to start range measurement
+    }
+  }
 
   // Start a range measurement
   write8(VL6180X_REG_SYSRANGE_START, 0x01);
 
-  return true;
+  return true; // Successfully initiated range measurement
 }
 
 /**************************************************************************/
@@ -251,12 +264,17 @@ boolean Adafruit_VL6180X::isRangeComplete(void) {
 /**************************************************************************/
 
 boolean Adafruit_VL6180X::waitRangeComplete(void) {
+  unsigned long startTime = millis();
 
-  // Poll until bit 2 is set
-  while (!(read8(VL6180X_REG_RESULT_INTERRUPT_STATUS_GPIO) & 0x04))
-    ;
+  // Poll until bit 2 is set or timeout occurs
+  while (!(read8(VL6180X_REG_RESULT_INTERRUPT_STATUS_GPIO) & 0x04)) {
+    if (millis() - startTime > 500) { // 500 ms timeout
+      Serial.println(F("Timeout waiting for range completion!"));
+      return false; // Signal failure to complete range measurement
+    }
+  }
 
-  return true;
+  return true; // Range measurement completed successfully
 }
 
 /**************************************************************************/
@@ -336,34 +354,41 @@ uint8_t Adafruit_VL6180X::readRangeStatus(void) {
 float Adafruit_VL6180X::readLux(uint8_t gain) {
   uint8_t reg;
 
+  // Configure interrupt for ALS ready
   reg = read8(VL6180X_REG_SYSTEM_INTERRUPT_CONFIG);
   reg &= ~0x38;
   reg |= (0x4 << 3); // IRQ on ALS ready
   write8(VL6180X_REG_SYSTEM_INTERRUPT_CONFIG, reg);
 
-  // 100 ms integration period
+  // Set ALS integration period (100 ms)
   write8(VL6180X_REG_SYSALS_INTEGRATION_PERIOD_HI, 0);
   write8(VL6180X_REG_SYSALS_INTEGRATION_PERIOD_LO, 100);
 
-  // analog gain
+  // Set analog gain
   if (gain > VL6180X_ALS_GAIN_40) {
     gain = VL6180X_ALS_GAIN_40;
   }
   write8(VL6180X_REG_SYSALS_ANALOGUE_GAIN, 0x40 | gain);
 
-  // start ALS
+  // Start ALS measurement
   write8(VL6180X_REG_SYSALS_START, 0x1);
 
-  // Poll until "New Sample Ready threshold event" is set
-  while (4 != ((read8(VL6180X_REG_RESULT_INTERRUPT_STATUS_GPIO) >> 3) & 0x7))
-    ;
+  // Poll until "New Sample Ready threshold event" or timeout
+  unsigned long startTime = millis();
+  while (4 != ((read8(VL6180X_REG_RESULT_INTERRUPT_STATUS_GPIO) >> 3) & 0x7)) {
+    if (millis() - startTime > 500) { // 500 ms timeout
+      Serial.println(F("Timeout waiting for ALS measurement!"));
+      return -1; // Indicate error
+    }
+  }
 
-  // read lux!
+  // Read lux value
   float lux = read16(VL6180X_REG_RESULT_ALS_VAL);
 
-  // clear interrupt
+  // Clear interrupt
   write8(VL6180X_REG_SYSTEM_INTERRUPT_CLEAR, 0x07);
 
+  // Apply calibration
   lux *= 0.32; // calibrated count/lux
   switch (gain) {
   case VL6180X_ALS_GAIN_1:
@@ -391,7 +416,7 @@ float Adafruit_VL6180X::readLux(uint8_t gain) {
     break;
   }
   lux *= 100;
-  lux /= 100; // integration time in ms
+  lux /= 100; // Normalize based on integration time (100 ms)
 
   return lux;
 }
